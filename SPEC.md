@@ -187,12 +187,16 @@ Language & tooling
 	•	Use the official obsidian module for all plugin APIs
 	•	Plugin extends the Plugin base class from obsidian
 	•	Required files: main.ts, manifest.json, styles.css (optional)
+	•	Node.js v16 or higher
+	•	Build tool: esbuild (configured via esbuild.config.mjs)
+	•	esbuild format: CommonJS (cjs), target: es2018, with tree-shaking enabled
 
 Plugin lifecycle
 	•	Use onload() to initialize event listeners and register view handlers
-	•	Use onunload() to clean up all event listeners and DOM modifications
-	•	Never modify DOM without tracking for cleanup
-	•	Use registerDomEvent() for proper event listener lifecycle management
+	•	Use registerEvent() for App/Workspace events, registerDomEvent() for DOM events, and registerInterval() for intervals
+	•	All registrations are automatically cleaned up when the plugin unloads—no manual cleanup in onunload() is required
+	•	The framework handles automatic cleanup recursively for all child components
+	•	Never manually remove event listeners; rely on the declarative registration system
 
 File modification
 	•	Use app.vault.modify(file, newContent) or app.vault.process(file, processor) for all file changes
@@ -211,6 +215,7 @@ Selection handling
 	•	Listen to mouseup and touchend events on preview containers
 	•	Map preview DOM to source positions using MarkdownView APIs
 	•	Handle selection within preview DOM, not source editor
+	•	Known limitation: Selection boundary mapping may be inaccurate for characters hidden by Live Preview rendering. Test thoroughly in both Source and Live Preview modes.
 
 Block boundary detection
 	•	Use DOM traversal to find containing block elements
@@ -220,8 +225,11 @@ Block boundary detection
 
 Mobile detection
 	•	Use Platform.isMobile or Platform.isPhone from obsidian module
+	•	Also use app.isMobile for comprehensive mobile detection
 	•	Platform is imported from 'obsidian'
 	•	Tablets are considered mobile for this plugin
+	•	For testing: Use app.emulateMobile(!this.app.isMobile) in developer console to toggle mobile emulation on desktop
+	•	Always verify on actual mobile devices, as desktop emulation differs from real mobile behavior
 
 Handle positioning
 	•	Use Range.getBoundingClientRect() for selection bounds
