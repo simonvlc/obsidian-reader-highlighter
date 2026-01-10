@@ -1,0 +1,272 @@
+Spec: Automatic Highlights in Reader Mode (Obsidian)
+
+Problem
+
+In Obsidian’s Reader (Preview) mode, users can read content but cannot naturally annotate it. Highlighting requires switching modes, interrupting reading flow.
+
+Goal
+
+Enable instant, frictionless highlighting directly in Reader mode, with highlights that persist safely into the note.
+
+⸻
+
+Plugin metadata
+
+	•	Plugin name: Reader Highlighter
+	•	Version: 0.0.1
+	•	Author: Simón Muñoz
+	•	Description: Highlight text in Reader mode and persist it to Markdown.
+
+⸻
+
+User experience
+
+Core behavior (Reader mode only)
+
+1. Automatic highlight on selection
+	•	When a user selects text in Reader mode:
+	•	The text is automatically highlighted.
+	•	No buttons, pop-ups, confirmations, or menus appear.
+	•	Releasing the selection finalizes the highlight.
+	• If selection spans inline formatting, preserve it: ==some **bold** text==
+
+
+Key principle:
+
+Selecting text is the action. No other interaction is required or supported for creating highlights. On mobile, optional draggable handles provide boundary adjustment after a highlight exists.
+
+⸻
+
+2. Paragraph highlight via double-click
+	•	When the user double-clicks any word inside a paragraph:
+	•	The entire paragraph is highlighted.
+	•	This applies consistently to:
+	•	Plain paragraphs
+	•	List items
+	•	Blockquotes
+	•	Headings
+
+Explicit rule:
+A “paragraph” is a single rendered block. Highlighting never spans multiple blocks.
+
+⸻
+
+3. Mobile highlight adjustment via draggable handles
+	•	On mobile devices, after a highlight is applied (via selection or double-tap):
+	•	Two native-styled text selection handles appear at the start and end of the highlighted text
+	•	Handles use Obsidian's accent color scheme
+	•	Users can touch and drag either handle to extend or reduce the highlight
+	•	While dragging, a visual preview (semi-transparent highlight) shows the new selection
+	•	When released, the old highlight is removed and a new one is applied to the adjusted selection
+	•	Handles reposition to the new highlight boundaries
+	•	Tapping anywhere outside the handles dismisses them, leaving the highlight intact
+
+Constraints:
+	•	Handles are mobile-only (no desktop support)
+	•	Multi-paragraph highlights remain unsupported
+	•	Undo/redo of handle adjustments is not supported
+
+⸻
+
+4. Persistence
+	•	Highlights are saved directly in the note file.
+	•	They persist across:
+	•	Closing and reopening the note
+	•	App restarts
+	•	Sync across devices
+
+⸻
+
+Interaction constraints (intentional)
+
+Allowed interactions
+	•	Selecting text on screen (mouse, touch, or keyboard selection) is the primary way to create or remove highlights.
+	•	On mobile only: Dragging handles to adjust existing highlight boundaries.
+
+Disallowed interactions
+	•	No command palette actions
+	•	No context menu items
+	•	No keyboard shortcuts dedicated to highlighting
+	•	No UI affordances except mobile handles (which appear only after a highlight exists)
+
+This ensures the feature:
+	•	Feels native and invisible during initial highlighting
+	•	Has zero learning curve for basic highlighting
+	•	Cannot be triggered accidentally outside reading flow
+	•	Provides mobile-specific refinement without cluttering the desktop experience
+
+⸻
+
+Behavior rules & safety guarantees
+
+Supported interactions
+
+The plugin guarantees correct behavior for:
+	•	Single, continuous selections
+	•	Paragraph-level highlighting via double-click
+	•	Mobile handle dragging to adjust highlight boundaries
+
+Guardrails (safe defaults)
+	•	If the selection cannot be safely or unambiguously applied:
+	•	The operation is cancelled silently or with minimal feedback
+	•	The plugin always prioritizes content integrity over feature completeness
+
+⸻
+
+Highlight representation (safe assumption)
+	•	Highlights are persisted using standard Markdown highlight syntax:
+==highlighted text==
+
+Rationale:
+	•	Human-readable and reversible by users
+	•	Widely understood in Obsidian
+	•	Low risk of file corruption
+	•	Compatible with sync, diffing, and manual edits
+
+(No alternative formats in v1.)
+
+⸻
+
+Accessibility & platform support
+	•	Works on desktop and mobile
+	•	Fully usable via:
+	•	Mouse selection
+	•	Touch selection
+	•	Keyboard-based text selection
+	•	Does not rely on hover states or precision pointing
+
+⸻
+
+Performance expectations (user-facing)
+	•	Highlighting feels instant
+	•	No noticeable delay after selection
+	•	Large notes remain responsive
+	•	No background processing outside the active note
+
+⸻
+
+Testing & quality bar (behavioral)
+
+Required coverage
+	•	Selecting text immediately applies a highlight
+	•	Double-clicking any word highlights the entire paragraph
+	•	Highlights persist after reload and sync
+	•	Unsupported selections never modify the note
+	•	Re-selecting highlighted text correctly removes the highlight
+	•	On mobile, handles appear after highlighting
+	•	On mobile, dragging handles shows visual preview
+	•	On mobile, releasing handles applies the adjusted highlight
+	•	On mobile, tapping outside handles dismisses them without changing the highlight
+
+Failure handling
+	•	In all failure cases:
+	•	The note remains unchanged
+	•	No partial or corrupted highlights are introduced
+
+⸻
+
+Non-goals (explicit)
+	•	❌ Undo / redo support (including handle adjustment undo)
+	•	❌ Command-based or menu-based highlighting
+	•	❌ Highlight colors, styles, or categories
+	•	❌ Comments, annotations, or metadata
+	•	❌ Exporting or sharing highlights
+	•	❌ Multi-paragraph highlights (even with handle adjustment)
+	•	❌ Desktop handle support (handles are mobile-only)
+
+Undo, multi-paragraph support, and advanced controls are intentionally deferred to future versions.
+
+⸻
+
+Implementation guidelines
+
+Technical approach
+
+Language & tooling
+	•	TypeScript with Obsidian API types
+	•	Use the official obsidian module for all plugin APIs
+	•	Plugin extends the Plugin base class from obsidian
+	•	Required files: main.ts, manifest.json, styles.css (optional)
+
+Plugin lifecycle
+	•	Use onload() to initialize event listeners and register view handlers
+	•	Use onunload() to clean up all event listeners and DOM modifications
+	•	Never modify DOM without tracking for cleanup
+	•	Use registerDomEvent() for proper event listener lifecycle management
+
+File modification
+	•	Use app.vault.modify(file, newContent) or app.vault.process(file, processor) for all file changes
+	•	Never write to files directly via filesystem APIs
+	•	Always work with TFile objects from Obsidian's vault API
+	•	Modifications should be atomic and transactional where possible
+
+Reader mode detection
+	•	Listen for workspace layout changes via app.workspace events
+	•	Identify Reader mode views using MarkdownView.getMode() === 'preview'
+	•	Register handlers only on preview mode leaves
+	•	Use leaf.view instanceof MarkdownView to identify markdown views
+
+Selection handling
+	•	Use native Selection API (window.getSelection())
+	•	Listen to mouseup and touchend events on preview containers
+	•	Map preview DOM to source positions using MarkdownView APIs
+	•	Handle selection within preview DOM, not source editor
+
+Block boundary detection
+	•	Use DOM traversal to find containing block elements
+	•	Target elements: p, li, blockquote > p, h1-h6, etc.
+	•	Use element.closest() to find the nearest block ancestor
+	•	Verify both selection start and end are in same block
+
+Mobile detection
+	•	Use Platform.isMobile or Platform.isPhone from obsidian module
+	•	Platform is imported from 'obsidian'
+	•	Tablets are considered mobile for this plugin
+
+Handle positioning
+	•	Use Range.getBoundingClientRect() for selection bounds
+	•	Position handles using absolute positioning within scroll container
+	•	Update handle positions on scroll events
+	•	Use CSS transforms for smooth repositioning
+
+Visual feedback
+	•	Apply highlights immediately to preview DOM using CSS classes
+	•	Use temporary classes for preview state (e.g., .highlight-preview)
+	•	Use permanent classes for persisted highlights (e.g., .highlight-persisted)
+	•	Debounce drag updates using requestAnimationFrame
+
+Error handling
+	•	Wrap all file modifications in try-catch blocks
+	•	Log errors using console.error for debugging
+	•	On failure, ensure DOM state is rolled back
+	•	Never leave partial highlights in either DOM or file
+
+Performance
+	•	Debounce handle drag events to ~60fps max
+	•	Use event delegation where possible
+	•	Avoid re-parsing entire document on each highlight
+	•	Cache frequently accessed DOM elements and file references
+
+⸻
+
+Acceptance criteria (v1 ship-ready)
+	1.	Plugin installs successfully in Obsidian and loads without errors.
+	2.	Plugin metadata is correct (name, version, author, description).
+	3.	Selecting text in Reader mode automatically highlights it.
+	4.	Double-clicking any word highlights the entire paragraph.
+	5.	On mobile, native-styled text selection handles (using Obsidian colors) appear at highlight boundaries after a highlight is applied.
+	6.	On mobile, handles can be dragged to adjust the highlight with a visual preview during drag.
+	7.	On mobile, releasing a handle applies the adjusted highlight and updates the markdown.
+	8.	On mobile, tapping outside handles dismisses them without modifying the highlight.
+	9.	Highlights persist reliably across sessions and devices.
+	10.	Unsupported selections never alter the note.
+	11.	The feature works consistently on desktop and mobile.
+	12.	Highlights are created via on-screen text selection. On mobile, existing highlights can be adjusted via handle dragging.
+
+⸻
+
+Deferred (future exploration)
+	•	Undo / redo
+	•	Multi-paragraph highlights
+	•	Highlight management tools
+	•	Annotation and commenting
