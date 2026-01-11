@@ -4,9 +4,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-**Reader Highlighter** is an Obsidian plugin (v0.0.1) that enables automatic text highlighting in Reader (Preview) mode. Users select text to highlight it instantly—no UI menus or confirmations. Highlights persist as standard Markdown syntax (`==text==`) in note files.
+**Reader Highlighter** is an Obsidian plugin in active development that enables automatic text highlighting in Reader (Preview) mode. Users select text to highlight it instantly—no UI menus or confirmations. Highlights persist as standard Markdown syntax (`==text==`) in note files.
 
 See [SPEC.md](SPEC.md) for the complete specification, acceptance criteria, and implementation guidelines.
+
+**Note**: Version numbers in manifest.json auto-increment via a post-edit hook after each change.
 
 ## Development Commands
 
@@ -21,18 +23,7 @@ npm run dev      # Watch mode for development (auto-rebuilds on changes)
 npm run build    # Production build
 ```
 
-### Code Quality
-```bash
-npm run lint     # Run linter
-npm run format   # Format code (if configured)
-```
-
-### Testing
-When tests are configured:
-```bash
-npm test                    # Run all tests
-npm test -- path/to/test.ts # Run single test file
-```
+Note: Linting, formatting, and testing scripts are not currently configured in this project.
 
 ### Development Environment
 - Develop in a dedicated test vault to prevent data loss
@@ -47,8 +38,8 @@ npm test -- path/to/test.ts # Run single test file
 - **main.ts**: Plugin entry point extending the `Plugin` base class
   - `onload()`: Initialize event listeners and register handlers
   - `onunload()`: No manual cleanup needed; the framework handles it automatically
-- **manifest.json**: Plugin metadata (name, version, author, description)
-- **styles.css** (optional): Styling for highlights and mobile handles
+- **manifest.json**: Plugin metadata (name, version, author, description); version auto-increments via post-edit hook
+- **styles.css**: Styling for highlights and mobile handles (required for proper mobile handle rendering)
 - **esbuild.config.mjs**: Build configuration (format: CommonJS, target: es2018, tree-shaking enabled)
 
 ### Core Interaction Flow

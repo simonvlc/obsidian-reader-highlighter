@@ -1,5 +1,6 @@
 import { MarkdownView, Platform, Plugin, TFile } from 'obsidian';
 
+// Type for identifying which handle is being dragged
 type DragHandle = 'start' | 'end';
 
 interface HandleState {
