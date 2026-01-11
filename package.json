@@ -1,0 +1,16 @@
+{
+  "name": "reader-highlighter",
+  "version": "0.0.1",
+  "description": "Highlight text in Obsidian Reader mode and persist it to Markdown.",
+  "main": "main.js",
+  "scripts": {
+    "dev": "node esbuild.config.mjs --watch",
+    "build": "node esbuild.config.mjs"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.5",
+    "esbuild": "^0.27.2",
+    "obsidian": "^1.5.3",
+    "typescript": "^5.3.3"
+  }
+}

@@ -1,0 +1,10 @@
+{
+  "id": "reader-highlighter",
+  "name": "Reader Highlighter",
+  "version": "0.0.6",
+  "minAppVersion": "1.4.0",
+  "description": "Highlight text in Reader mode and persist it to Markdown.",
+  "author": "Simón Muñoz",
+  "authorUrl": "https://github.com/simonvlc",
+  "isDesktopOnly": false
+}
