@@ -6,3 +6,46 @@
 .reader-highlight-preview-range {
   background: var(--text-highlight-bg, rgba(255, 214, 102, 0.3));
 }
+
+/* Floating remove button */
+.reader-highlight-remove-button {
+  position: fixed;
+  z-index: 1000;
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  border: none;
+  background: var(--background-primary, #fff);
+  color: var(--background-modifier-error, #dc3545);
+  font-size: 18px;
+  font-weight: bold;
+  line-height: 1;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+  transition: transform 0.1s ease, opacity 0.15s ease;
+  opacity: 0.95;
+}
+
+.reader-highlight-remove-button:hover {
+  transform: scale(1.1);
+  opacity: 1;
+}
+
+.reader-highlight-remove-button:focus {
+  outline: 2px solid var(--interactive-accent, #7b6cd9);
+  outline-offset: 2px;
+}
+
+.reader-highlight-remove-button:active {
+  transform: scale(0.95);
+}
+
+/* Mobile: larger touch target */
+.is-mobile .reader-highlight-remove-button {
+  width: 44px;
+  height: 44px;
+  font-size: 22px;
+}

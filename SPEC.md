@@ -66,7 +66,29 @@ Constraints:
 
 ⸻
 
-4. Persistence
+4. Highlight removal via floating button
+	•	When the user creates a new highlight or taps/clicks on an existing highlight:
+	•	A small floating "remove" button (×) appears centered below the highlight
+	•	Tapping the button removes the highlight (unwraps the ==markers==)
+	•	Tapping elsewhere dismisses the button without removing the highlight
+	•	The button remains visible until dismissed by user action (no auto-timeout)
+
+Behavior details:
+	•	The button appears centered below the highlight
+	•	On mobile, the button is sized for touch (44×44pt tap target)
+	•	On desktop, the button is 32×32px and can be activated with mouse or keyboard (Enter/Space, Escape to dismiss)
+	•	Only one remove button is shown at a time (creating or selecting another highlight moves it)
+	•	Button has white background with red × symbol for clear visibility
+
+Rationale:
+	•	Removal is a destructive action that benefits from explicit confirmation
+	•	This is the sole UI affordance exception to the "invisible interaction" philosophy
+	•	Appearing immediately after creation provides quick access to undo
+	•	No timeout ensures users can take their time deciding whether to remove
+
+⸻
+
+5. Persistence
 	•	Highlights are saved directly in the note file.
 	•	They persist across:
 	•	Closing and reopening the note
@@ -78,14 +100,15 @@ Constraints:
 Interaction constraints (intentional)
 
 Allowed interactions
-	•	Selecting text on screen (mouse, touch, or keyboard selection) is the primary way to create or remove highlights.
+	•	Selecting text on screen (mouse, touch, or keyboard selection) is the primary way to create highlights.
+	•	A floating remove button appears immediately after creating a highlight or when tapping/clicking an existing highlight.
 	•	On mobile only: Immediately after highlighting, use native selection handles to adjust the selection.
 
 Disallowed interactions
 	•	No command palette actions
 	•	No context menu items
 	•	No keyboard shortcuts dedicated to highlighting
-	•	No UI affordances except native OS selection handles (shown immediately after a highlight on mobile)
+	•	No UI affordances except native OS selection handles (mobile) and the floating remove button
 
 This ensures the feature:
 	•	Feels native and invisible during initial highlighting
@@ -150,12 +173,18 @@ Required coverage
 	•	Double-clicking any word highlights the entire paragraph
 	•	Highlights persist after reload and sync
 	•	Unsupported selections never modify the note
-	•	Re-selecting highlighted text correctly removes the highlight
+	•	Creating a new highlight shows a floating remove button immediately
+	•	Tapping/clicking an existing highlight shows a floating remove button
+	•	The remove button appears centered below the highlight
+	•	Tapping the remove button removes the highlight from the note
+	•	Tapping elsewhere dismisses the remove button without changes
+	•	The remove button remains visible until user dismisses it (no auto-timeout)
+	•	On desktop, Escape key dismisses the remove button
 	•	On mobile, native selection handles appear right after highlighting
 	•	On mobile, adjusting the native selection updates the highlight boundaries
 	•	On mobile, selection stabilization persists the adjusted highlight
 	•	On mobile, dismissing the selection leaves the highlight unchanged
-	•	On mobile, tapping an existing highlight enters adjustment mode
+	•	On mobile, tapping an existing highlight enters adjustment mode and shows remove button
 	•	Adjusting highlight boundaries never deletes text from the note
 
 Failure handling
@@ -250,6 +279,19 @@ Highlight adjustment safety
 	•	This ensures shrinking a highlight (e.g., "A B C" → "A B") preserves the excluded text ("C")
 	•	Verify the new text position is within or near the original highlight location to avoid ambiguity
 
+Floating remove button
+	•	Create button element dynamically when a highlight is created or tapped/clicked
+	•	Position using getBoundingClientRect() of the target <mark> element
+	•	Position centered horizontally below the highlight
+	•	Add to document.body with position: fixed to avoid layout issues
+	•	Use CSS classes for styling (defined in styles.css)
+	•	White background with red × symbol (color: var(--background-modifier-error))
+	•	32×32px on desktop, 44×44px on mobile for touch accessibility
+	•	No auto-dismiss timeout - button remains until user action
+	•	Remove button on dismiss (click elsewhere, Escape key) or removal action
+	•	Prevent click event from bubbling to avoid triggering new highlight creation
+	•	After creating a highlight, wait for re-render (~50ms) then show button on the newly created <mark> element
+
 Error handling
 	•	Wrap all file modifications in try-catch blocks
 	•	Log errors using console.error for debugging
@@ -269,14 +311,20 @@ Acceptance criteria (v1 ship-ready)
 	2.	Plugin metadata is correct (name, version, author, description).
 	3.	Selecting text in Reader mode automatically highlights it.
 	4.	Double-clicking any word highlights the entire paragraph.
-	5.	On mobile, native OS selection handles appear immediately after a highlight is created.
-	6.	On mobile, dragging native selection handles adjusts the highlight boundaries.
-	7.	On mobile, when the selection stabilizes, the adjusted highlight persists to markdown.
-	8.	On mobile, dismissing the selection leaves the highlight unchanged.
-	9.	Highlights persist reliably across sessions and devices.
-	10.	Unsupported selections never alter the note.
-	11.	The feature works consistently on desktop and mobile.
-	12.	Highlights are created via on-screen text selection. On mobile, users can adjust right after creation via native selection handles.
+	5.	A floating remove button appears immediately after creating a highlight.
+	6.	The remove button is centered below the highlight.
+	7.	Clicking the remove button removes the highlight and persists the change.
+	8.	Clicking elsewhere dismisses the remove button without removing the highlight.
+	9.	On desktop, pressing Escape dismisses the remove button.
+	10.	On mobile, native OS selection handles appear immediately after a highlight is created.
+	11.	On mobile, dragging native selection handles adjusts the highlight boundaries.
+	12.	On mobile, when the selection stabilizes, the adjusted highlight persists to markdown.
+	13.	On mobile, dismissing the selection leaves the highlight unchanged.
+	14.	Tapping or clicking an existing highlight shows the floating remove button.
+	15.	On mobile, tapping an existing highlight shows both the remove button and selection handles.
+	16.	Highlights persist reliably across sessions and devices.
+	17.	Unsupported selections never alter the note.
+	18.	The feature works consistently on desktop and mobile.
 
 ⸻
 

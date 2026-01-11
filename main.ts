@@ -10,10 +10,19 @@ interface AdjustmentState {
   lastSelectionRange?: Range;
 }
 
+// State for floating remove button
+interface RemoveButtonState {
+  button: HTMLElement;
+  mark: HTMLElement;
+  file: TFile | null;
+  highlightText: string;
+}
+
 export default class ReaderHighlighterPlugin extends Plugin {
   private boundContainers = new WeakSet<HTMLElement>();
   private documentEventsBound = false;
   private adjustmentState?: AdjustmentState;
+  private removeButtonState?: RemoveButtonState;
 
   private static readonly RERENDER_DELAY_MS = 50;
   private static readonly TOUCHEND_PERSIST_DELAY_MS = 50;
@@ -30,6 +39,7 @@ export default class ReaderHighlighterPlugin extends Plugin {
 
   onunload(): void {
     this.exitAdjustmentMode();
+    this.dismissRemoveButton();
   }
 
   private refreshPreviewBindings(): void {
@@ -64,6 +74,9 @@ export default class ReaderHighlighterPlugin extends Plugin {
       this.documentEventsBound = true;
       this.registerDomEvent(document, 'selectionchange', () => this.handleSelectionChange());
 
+      // Register click handler to dismiss remove button when clicking elsewhere
+      this.registerDomEvent(document, 'click', (evt) => this.handleDocumentClick(evt));
+
       // Register touch events to detect handle dragging on mobile
       if (this.isMobile()) {
         this.registerDomEvent(document, 'touchstart', () => this.handleTouchStart());
@@ -94,9 +107,9 @@ export default class ReaderHighlighterPlugin extends Plugin {
 
     const persisted = await this.persistHighlight(view.file, markdown);
 
-    if (persisted && this.isMobile()) {
-      // Wait for re-render, then find and select the mark element
-      this.selectHighlightAfterRerender(container, markdown, view.file);
+    if (persisted) {
+      // Wait for re-render, then find and show the mark element with remove button
+      this.showRemoveButtonAfterRerender(container, markdown, view.file);
     }
   }
 
@@ -124,44 +137,69 @@ export default class ReaderHighlighterPlugin extends Plugin {
 
     const persisted = await this.persistHighlight(view.file, markdown);
 
-    if (persisted && this.isMobile()) {
-      // Wait for re-render, then find and select the mark element
-      this.selectHighlightAfterRerender(container, markdown, view.file);
+    if (persisted) {
+      // Wait for re-render, then find and show the mark element with remove button
+      this.showRemoveButtonAfterRerender(container, markdown, view.file);
     }
   }
 
+  private handleDocumentClick(event: MouseEvent): void {
+    // Dismiss remove button if clicking outside of it
+    if (!this.removeButtonState) return;
+
+    const target = event.target as HTMLElement | null;
+    if (!target) return;
+
+    // Don't dismiss if clicking the button itself
+    if (this.removeButtonState.button.contains(target)) return;
+
+    // Don't dismiss if clicking the same mark element (will be handled by handleHighlightTap)
+    if (this.removeButtonState.mark.contains(target)) return;
+
+    this.dismissRemoveButton();
+  }
+
   private handleHighlightTap(event: MouseEvent, view: MarkdownView, container: HTMLElement): void {
-    if (!this.isMobile()) return;
     if (view.getMode() !== 'preview') return;
 
-    // Check if tap was on a mark element
+    // Check if tap/click was on a mark element
     const target = event.target as HTMLElement | null;
     if (!target) return;
 
     const mark = target.closest('mark');
     if (!mark || !container.contains(mark)) return;
 
-    // Don't interfere if already in adjustment mode for this highlight
-    const markText = this.serializeRangeToMarkdown(this.createRangeForElement(mark));
+    const markText = this.serializeRangeToMarkdown(this.createRangeForElement(mark as HTMLElement));
+
+    // If remove button is already showing for this highlight, do nothing
+    if (this.removeButtonState?.highlightText === markText) return;
+
+    // Don't interfere if already in adjustment mode for this highlight (mobile)
     if (this.adjustmentState?.originalText === markText) return;
 
     // Exit any existing adjustment mode
     this.exitAdjustmentMode();
 
-    const block = this.getBlock(mark);
-    if (!block) return;
+    // Show the floating remove button
+    this.showRemoveButton(mark as HTMLElement, view.file, markText);
 
-    // Select the mark contents
-    const range = document.createRange();
-    range.selectNodeContents(mark);
+    // On mobile, also enter adjustment mode with selection handles
+    if (this.isMobile()) {
+      const block = this.getBlock(mark);
+      if (!block) return;
 
-    const selection = window.getSelection();
-    selection?.removeAllRanges();
-    selection?.addRange(range);
+      // Select the mark contents to show native handles
+      const range = document.createRange();
+      range.selectNodeContents(mark);
 
-    // Enter adjustment mode
-    this.enterAdjustmentMode(block, view.file, markText);
-    console.debug('[Reader Highlighter] Tapped existing highlight, entering adjustment mode');
+      const selection = window.getSelection();
+      selection?.removeAllRanges();
+      selection?.addRange(range);
+
+      // Enter adjustment mode
+      this.enterAdjustmentMode(block, view.file, markText);
+      console.debug('[Reader Highlighter] Tapped existing highlight, entering adjustment mode');
+    }
   }
 
   private createRangeForElement(element: Element): Range {
@@ -345,7 +383,7 @@ export default class ReaderHighlighterPlugin extends Plugin {
 
   // --- Adjustment Mode (Mobile Native Selection) ---
 
-  private selectHighlightAfterRerender(container: HTMLElement, text: string, file: TFile | null): void {
+  private showRemoveButtonAfterRerender(container: HTMLElement, text: string, file: TFile | null): void {
     // Wait for Obsidian to re-render the preview after file modification
     setTimeout(() => {
       const mark = this.findMarkElement(container, text);
@@ -354,22 +392,28 @@ export default class ReaderHighlighterPlugin extends Plugin {
         return;
       }
 
-      const block = this.getBlock(mark);
-      if (!block) {
-        console.debug('[Reader Highlighter] Could not find block for mark element');
-        return;
+      // Show the floating remove button
+      this.showRemoveButton(mark, file, text);
+
+      // On mobile, also enter adjustment mode with selection handles
+      if (this.isMobile()) {
+        const block = this.getBlock(mark);
+        if (!block) {
+          console.debug('[Reader Highlighter] Could not find block for mark element');
+          return;
+        }
+
+        // Select the mark element contents
+        const range = document.createRange();
+        range.selectNodeContents(mark);
+
+        const selection = window.getSelection();
+        selection?.removeAllRanges();
+        selection?.addRange(range);
+
+        // Enter adjustment mode
+        this.enterAdjustmentMode(block, file, text);
       }
-
-      // Select the mark element contents
-      const range = document.createRange();
-      range.selectNodeContents(mark);
-
-      const selection = window.getSelection();
-      selection?.removeAllRanges();
-      selection?.addRange(range);
-
-      // Enter adjustment mode
-      this.enterAdjustmentMode(block, file, text);
     }, ReaderHighlighterPlugin.RERENDER_DELAY_MS);
   }
 
@@ -505,6 +549,109 @@ export default class ReaderHighlighterPlugin extends Plugin {
       // Update state to reflect new text (in case user continues adjusting)
       this.adjustmentState.originalText = newText;
       console.debug('[Reader Highlighter] Adjusted highlight to:', newText);
+    }
+  }
+
+  // --- Floating Remove Button ---
+
+  private showRemoveButton(mark: HTMLElement, file: TFile | null, highlightText: string): void {
+    // Dismiss any existing button first
+    this.dismissRemoveButton();
+
+    // Create button element
+    const button = document.createElement('button');
+    button.className = 'reader-highlight-remove-button';
+    button.setAttribute('aria-label', 'Remove highlight');
+    button.innerHTML = '×';
+
+    // Position the button centered below the highlight
+    const rect = mark.getBoundingClientRect();
+    const buttonWidth = this.isMobile() ? 44 : 32;
+    const margin = 8;
+
+    // Position below the highlight
+    const top = rect.bottom + margin + window.scrollY;
+
+    // Center horizontally on the highlight
+    let left = rect.left + rect.width / 2 - buttonWidth / 2 + window.scrollX;
+    // Keep within viewport
+    if (left + buttonWidth > window.innerWidth - margin) {
+      left = window.innerWidth - buttonWidth - margin;
+    }
+    left = Math.max(margin, left);
+
+    button.style.top = `${top}px`;
+    button.style.left = `${left}px`;
+
+    // Add to document
+    document.body.appendChild(button);
+
+    // Set up click handler to remove highlight
+    button.addEventListener('click', (evt) => {
+      evt.preventDefault();
+      evt.stopPropagation();
+      this.removeHighlight(file, highlightText);
+    });
+
+    // Set up keyboard handler for accessibility
+    button.addEventListener('keydown', (evt) => {
+      if (evt.key === 'Enter' || evt.key === ' ') {
+        evt.preventDefault();
+        evt.stopPropagation();
+        this.removeHighlight(file, highlightText);
+      } else if (evt.key === 'Escape') {
+        this.dismissRemoveButton();
+      }
+    });
+
+    // Store state
+    this.removeButtonState = {
+      button,
+      mark,
+      file,
+      highlightText,
+    };
+
+    // Focus button for keyboard accessibility (desktop)
+    if (!this.isMobile()) {
+      button.focus();
+    }
+
+    console.debug('[Reader Highlighter] Showing remove button for:', highlightText);
+  }
+
+  private dismissRemoveButton(): void {
+    if (!this.removeButtonState) return;
+
+    this.removeButtonState.button.remove();
+    this.removeButtonState = undefined;
+
+    console.debug('[Reader Highlighter] Dismissed remove button');
+  }
+
+  private async removeHighlight(file: TFile | null, highlightText: string): Promise<void> {
+    this.dismissRemoveButton();
+
+    if (!file || !highlightText) return;
+
+    const wrapped = `==${highlightText}==`;
+
+    try {
+      const content = await this.app.vault.read(file);
+      const matches = this.findAllOccurrences(content, wrapped);
+
+      if (matches.length !== 1) {
+        console.warn('[Reader Highlighter] Ambiguous highlight, aborting removal.');
+        return;
+      }
+
+      const idx = matches[0];
+      const newContent = content.slice(0, idx) + highlightText + content.slice(idx + wrapped.length);
+      await this.app.vault.modify(file, newContent);
+
+      console.debug('[Reader Highlighter] Removed highlight:', highlightText);
+    } catch (error) {
+      console.error('[Reader Highlighter] Failed to remove highlight', error);
     }
   }
 }
