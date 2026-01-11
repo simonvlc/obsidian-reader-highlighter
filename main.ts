@@ -258,8 +258,7 @@ export default class ReaderHighlighterPlugin extends Plugin {
     if (!file) return false;
     if (!originalText || !newText) return false;
     const originalWrapped = `==${originalText}==`;
-    const newWrapped = `==${newText}==`;
-    if (originalWrapped === newWrapped) return true;
+    if (originalText === newText) return true;
 
     try {
       const content = await this.app.vault.read(file);
@@ -270,8 +269,31 @@ export default class ReaderHighlighterPlugin extends Plugin {
       }
 
       const idx = matches[0];
+
+      // First, unwrap the original highlight to restore plain text
+      const unwrappedContent =
+        content.slice(0, idx) + originalText + content.slice(idx + originalWrapped.length);
+
+      // Now find and wrap only the new selection within the unwrapped content
+      // The new text should exist within the original text's location
+      const newPositions = this.findOccurrencesOutsideHighlight(unwrappedContent, newText);
+
+      // Find the position that's within or near the original highlight location
+      const nearbyPosition = newPositions.find(
+        (pos) => pos >= idx && pos <= idx + originalText.length
+      );
+
+      if (nearbyPosition === undefined) {
+        console.warn('[Reader Highlighter] Could not find new text position, aborting adjustment.');
+        return false;
+      }
+
+      const newWrapped = `==${newText}==`;
       const newContent =
-        content.slice(0, idx) + newWrapped + content.slice(idx + originalWrapped.length);
+        unwrappedContent.slice(0, nearbyPosition) +
+        newWrapped +
+        unwrappedContent.slice(nearbyPosition + newText.length);
+
       await this.app.vault.modify(file, newContent);
       return true;
     } catch (error) {

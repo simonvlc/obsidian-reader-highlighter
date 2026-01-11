@@ -155,6 +155,8 @@ Required coverage
 	•	On mobile, adjusting the native selection updates the highlight boundaries
 	•	On mobile, selection stabilization persists the adjusted highlight
 	•	On mobile, dismissing the selection leaves the highlight unchanged
+	•	On mobile, tapping an existing highlight enters adjustment mode
+	•	Adjusting highlight boundaries never deletes text from the note
 
 Failure handling
 	•	In all failure cases:
@@ -234,6 +236,19 @@ Native selection adjustment
 	•	Use selectionchange events to observe user adjustments immediately after highlight creation
 	•	Debounce persistence (e.g., 200-300ms) before writing to the note
 	•	Cancel adjustment if the selection collapses or leaves the original block
+
+Re-rendering and mark element selection
+	•	After persisting a highlight, Obsidian re-renders the preview which clears the DOM selection
+	•	To show native OS handles on mobile, wait for re-render (~50ms delay) then find and select the <mark> element
+	•	Use querySelectorAll('mark') to find highlight elements in the container
+	•	Match by normalized text content (collapse whitespace, trim) for reliable matching
+	•	Tapping an existing <mark> element on mobile should also enter adjustment mode
+
+Highlight adjustment safety
+	•	When adjusting highlight boundaries, never lose text from the note
+	•	Adjustment algorithm: (1) unwrap the original highlight, (2) find the new selection text within the unwrapped content, (3) wrap only the new selection
+	•	This ensures shrinking a highlight (e.g., "A B C" → "A B") preserves the excluded text ("C")
+	•	Verify the new text position is within or near the original highlight location to avoid ambiguity
 
 Error handling
 	•	Wrap all file modifications in try-catch blocks
