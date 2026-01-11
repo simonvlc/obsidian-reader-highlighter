@@ -1,32 +1,20 @@
 import { MarkdownView, Platform, Plugin, TFile } from 'obsidian';
 
-// Type for identifying which handle is being dragged
-type DragHandle = 'start' | 'end';
-
-interface HandleState {
-  root: HTMLElement;
-  host: HTMLElement;
+// State for mobile selection adjustment mode
+interface AdjustmentState {
   block: HTMLElement;
-  range: Range;
-  highlightText: string;
   file: TFile | null;
-  layer: HTMLElement;
-  startHandle: HTMLElement;
-  endHandle: HTMLElement;
-  active?: DragHandle;
-  activeHandleEl?: HTMLElement;
-  previewRange?: Range;
-  originalPosition?: string;
-  pointerId?: number;
-  touchId?: number;
+  originalText: string;
+  debounceTimer?: ReturnType<typeof setTimeout>;
 }
 
 export default class ReaderHighlighterPlugin extends Plugin {
   private boundContainers = new WeakSet<HTMLElement>();
-  private boundScrollHosts = new WeakSet<HTMLElement>();
   private documentEventsBound = false;
-  private handleState?: HandleState;
-  private dragFrame?: number;
+  private adjustmentState?: AdjustmentState;
+
+  private static readonly ADJUSTMENT_DEBOUNCE_MS = 250;
+  private static readonly RERENDER_DELAY_MS = 50;
 
   async onload(): Promise<void> {
     this.refreshPreviewBindings();
@@ -39,7 +27,7 @@ export default class ReaderHighlighterPlugin extends Plugin {
   }
 
   onunload(): void {
-    this.removeHandles();
+    this.exitAdjustmentMode();
   }
 
   private refreshPreviewBindings(): void {
@@ -65,27 +53,23 @@ export default class ReaderHighlighterPlugin extends Plugin {
       window.setTimeout(() => this.handleSelectionEvent(evt, view, container), 10);
     });
     this.registerDomEvent(container, 'dblclick', (evt) => this.handleDoubleClick(evt, view, container));
-    this.registerDomEvent(container, 'touchstart', (evt) => this.handleTouchStart(evt, container), { passive: false });
-    this.registerDomEvent(container, 'pointerdown', (evt) => this.handlePointerDown(evt, container));
 
+    // Handle taps on existing highlights (mobile only)
+    this.registerDomEvent(container, 'click', (evt) => this.handleHighlightTap(evt, view, container));
+
+    // Register selectionchange listener once at document level
     if (!this.documentEventsBound) {
       this.documentEventsBound = true;
-      this.registerDomEvent(document, 'touchmove', (evt) => this.handleTouchMove(evt), { passive: false, capture: true });
-      this.registerDomEvent(document, 'touchend', (evt) => this.handleTouchEnd(evt), { passive: false, capture: true });
-      this.registerDomEvent(document, 'touchcancel', (evt) => this.handleTouchCancel(evt), { passive: false, capture: true });
-      this.registerDomEvent(document, 'pointermove', (evt) => this.handlePointerMove(evt), true);
-      this.registerDomEvent(document, 'pointerup', (evt) => this.handlePointerUp(evt), true);
-      this.registerDomEvent(window, 'scroll', () => this.positionHandles());
+      this.registerDomEvent(document, 'selectionchange', () => this.handleSelectionChange());
     }
-
-    this.registerDomEvent(container, 'scroll', () => this.positionHandles());
-    this.registerDomEvent(container, 'click', (evt) => this.dismissHandlesIfNeeded(evt, container));
   }
 
   private async handleSelectionEvent(event: Event, view: MarkdownView, container: HTMLElement): Promise<void> {
     if (view.getMode() !== 'preview') return;
     if (event instanceof MouseEvent && event.detail >= 2) return;
-    if (this.handleState?.active) return;
+
+    // If in adjustment mode, ignore new selection events (user is adjusting)
+    if (this.adjustmentState) return;
 
     const selection = window.getSelection();
     if (!selection || selection.isCollapsed) return;
@@ -98,15 +82,23 @@ export default class ReaderHighlighterPlugin extends Plugin {
     const markdown = this.serializeRangeToMarkdown(range);
     if (!markdown) return;
 
-    const persisted = await this.persistHighlight(view.file, markdown);
-    if (persisted && this.isMobile()) {
-      this.showHandles(range, block, container, markdown, view.file);
-    }
     selection.removeAllRanges();
+
+    const persisted = await this.persistHighlight(view.file, markdown);
+
+    if (persisted && this.isMobile()) {
+      // Wait for re-render, then find and select the mark element
+      this.selectHighlightAfterRerender(container, markdown, view.file);
+    }
   }
 
   private async handleDoubleClick(event: MouseEvent, view: MarkdownView, container: HTMLElement): Promise<void> {
     if (view.getMode() !== 'preview') return;
+
+    // Exit any existing adjustment mode
+    if (this.adjustmentState) {
+      this.exitAdjustmentMode();
+    }
 
     const target = event.target as Node | null;
     if (!target || !container.contains(target)) return;
@@ -120,11 +112,54 @@ export default class ReaderHighlighterPlugin extends Plugin {
     const markdown = this.serializeRangeToMarkdown(range);
     if (!markdown) return;
 
-    const persisted = await this.persistHighlight(view.file, markdown);
-    if (persisted && this.isMobile()) {
-      this.showHandles(range, block, container, markdown, view.file);
-    }
     window.getSelection()?.removeAllRanges();
+
+    const persisted = await this.persistHighlight(view.file, markdown);
+
+    if (persisted && this.isMobile()) {
+      // Wait for re-render, then find and select the mark element
+      this.selectHighlightAfterRerender(container, markdown, view.file);
+    }
+  }
+
+  private handleHighlightTap(event: MouseEvent, view: MarkdownView, container: HTMLElement): void {
+    if (!this.isMobile()) return;
+    if (view.getMode() !== 'preview') return;
+
+    // Check if tap was on a mark element
+    const target = event.target as HTMLElement | null;
+    if (!target) return;
+
+    const mark = target.closest('mark');
+    if (!mark || !container.contains(mark)) return;
+
+    // Don't interfere if already in adjustment mode for this highlight
+    const markText = this.serializeRangeToMarkdown(this.createRangeForElement(mark));
+    if (this.adjustmentState?.originalText === markText) return;
+
+    // Exit any existing adjustment mode
+    this.exitAdjustmentMode();
+
+    const block = this.getBlock(mark);
+    if (!block) return;
+
+    // Select the mark contents
+    const range = document.createRange();
+    range.selectNodeContents(mark);
+
+    const selection = window.getSelection();
+    selection?.removeAllRanges();
+    selection?.addRange(range);
+
+    // Enter adjustment mode
+    this.enterAdjustmentMode(block, view.file, markText);
+    console.debug('[Reader Highlighter] Tapped existing highlight, entering adjustment mode');
+  }
+
+  private createRangeForElement(element: Element): Range {
+    const range = document.createRange();
+    range.selectNodeContents(element);
+    return range;
   }
 
   private getBlock(node: Node | null): HTMLElement | null {
@@ -275,486 +310,144 @@ export default class ReaderHighlighterPlugin extends Plugin {
   }
 
   private isMobile(): boolean {
-    return Platform.isMobile || Platform.isPhone || this.app.isMobile;
+    return Platform.isMobile || Platform.isPhone || (this.app as any).isMobile;
   }
 
-  private isActiveTouchDrag(): boolean {
-    return Boolean(
-      this.handleState?.active &&
-      this.handleState.pointerId === undefined &&
-      this.handleState.touchId !== undefined
-    );
+  // --- Adjustment Mode (Mobile Native Selection) ---
+
+  private selectHighlightAfterRerender(container: HTMLElement, text: string, file: TFile | null): void {
+    // Wait for Obsidian to re-render the preview after file modification
+    setTimeout(() => {
+      const mark = this.findMarkElement(container, text);
+      if (!mark) {
+        console.debug('[Reader Highlighter] Could not find mark element after re-render');
+        return;
+      }
+
+      const block = this.getBlock(mark);
+      if (!block) {
+        console.debug('[Reader Highlighter] Could not find block for mark element');
+        return;
+      }
+
+      // Select the mark element contents
+      const range = document.createRange();
+      range.selectNodeContents(mark);
+
+      const selection = window.getSelection();
+      selection?.removeAllRanges();
+      selection?.addRange(range);
+
+      // Enter adjustment mode
+      this.enterAdjustmentMode(block, file, text);
+    }, ReaderHighlighterPlugin.RERENDER_DELAY_MS);
   }
 
-  private isActivePointerDrag(pointerId?: number): boolean {
-    if (!this.handleState?.active) return false;
-    if (this.handleState.pointerId === undefined) return false;
-    return pointerId === undefined || this.handleState.pointerId === pointerId;
-  }
+  private findMarkElement(container: HTMLElement, text: string): HTMLElement | null {
+    const marks = container.querySelectorAll('mark');
+    const normalizedText = this.normalizeText(text);
 
-  private showHandles(
-    range: Range,
-    block: HTMLElement,
-    rootContainer: HTMLElement,
-    highlightText: string,
-    file: TFile | null
-  ): void {
-    if (!this.isMobile()) return;
-    this.removeHandles();
-
-    const host = this.findScrollContainer(block, rootContainer) ?? rootContainer;
-
-    const computedPosition = getComputedStyle(host).position;
-    const originalPosition =
-      computedPosition === 'static' ? host.style.position || undefined : undefined;
-    if (computedPosition === 'static') {
-      host.style.position = 'relative';
+    for (const mark of Array.from(marks)) {
+      const markText = this.normalizeText(mark.textContent || '');
+      if (markText === normalizedText) {
+        return mark as HTMLElement;
+      }
     }
 
-    const layer = document.createElement('div');
-    layer.className = 'reader-highlight-handle-layer';
-    host.appendChild(layer);
-
-    const startHandle = document.createElement('div');
-    startHandle.className = 'reader-highlight-handle';
-    startHandle.dataset.handle = 'start';
-
-    const endHandle = document.createElement('div');
-    endHandle.className = 'reader-highlight-handle';
-    endHandle.dataset.handle = 'end';
-
-    layer.appendChild(startHandle);
-    layer.appendChild(endHandle);
-
-    this.handleState = {
-      root: rootContainer,
-      host,
-      block,
-      range: range.cloneRange(),
-      highlightText,
-      file,
-      layer,
-      startHandle,
-      endHandle,
-      originalPosition
-    };
-
-    if (!this.boundScrollHosts.has(host)) {
-      this.boundScrollHosts.add(host);
-      this.registerDomEvent(host, 'scroll', () => this.positionHandles());
+    // If no exact match, try to find the most recent mark (last in DOM order)
+    // This helps when multiple highlights have similar text
+    if (marks.length > 0) {
+      console.debug('[Reader Highlighter] Using last mark element as fallback');
+      return marks[marks.length - 1] as HTMLElement;
     }
 
-    this.positionHandles();
+    return null;
   }
 
-  private positionHandles(rangeOverride?: Range): void {
-    if (!this.handleState) return;
-    const range = rangeOverride ?? this.handleState.previewRange ?? this.handleState.range;
-    const rects = range.getClientRects();
-    if (!rects.length) return;
-
-    const hostRect = this.handleState.host.getBoundingClientRect();
-    const scrollLeft = this.handleState.host.scrollLeft;
-    const scrollTop = this.handleState.host.scrollTop;
-    const startRect = rects[0];
-    const endRect = rects[rects.length - 1];
-
-    const startLeft = startRect.left - hostRect.left + scrollLeft;
-    const startTop = startRect.bottom - hostRect.top + scrollTop;
-    const endLeft = endRect.right - hostRect.left + scrollLeft;
-    const endTop = endRect.bottom - hostRect.top + scrollTop;
-
-    this.handleState.startHandle.style.left = `${startLeft}px`;
-    this.handleState.startHandle.style.top = `${startTop}px`;
-    this.handleState.endHandle.style.left = `${endLeft}px`;
-    this.handleState.endHandle.style.top = `${endTop}px`;
+  private normalizeText(text: string): string {
+    // Normalize whitespace and trim
+    return text.replace(/\s+/g, ' ').trim();
   }
 
-  private handlePointerDown(event: PointerEvent, container: HTMLElement): void {
-    if (!this.isMobile()) return;
-    const target = this.resolveHandleTarget(event.target, event.clientX, event.clientY);
-    if (!target) return;
-    event.preventDefault();
-    event.stopPropagation();
-    const handleType = (target.dataset.handle as DragHandle | undefined) ?? 'start';
-    if (!this.handleState || this.handleState.root !== container) return;
-    target.setPointerCapture(event.pointerId);
-    this.handleState.active = handleType;
-    this.setActiveHandle(target);
-    this.handleState.pointerId = event.pointerId;
-    this.handleState.touchId = undefined;
+  private enterAdjustmentMode(block: HTMLElement, file: TFile | null, originalText: string): void {
+    this.exitAdjustmentMode();
+    this.adjustmentState = { block, file, originalText };
+    console.debug('[Reader Highlighter] Entered adjustment mode for:', originalText);
   }
 
-  private handleTouchStart(event: TouchEvent, container: HTMLElement): void {
-    if (!this.isMobile()) return;
-    const touch = event.changedTouches[0];
-    if (!touch) return;
-    const target = this.resolveHandleTarget(event.target, touch.clientX, touch.clientY);
-    if (!target) return;
-    if (!this.handleState || this.handleState.root !== container) return;
-    if (this.handleState.pointerId !== undefined) return;
-    event.preventDefault();
-    event.stopPropagation();
-    const handleType = (target.dataset.handle as DragHandle | undefined) ?? 'start';
-    this.handleState.active = handleType;
-    this.setActiveHandle(target);
-    this.handleState.touchId = touch.identifier;
-    this.handleState.pointerId = undefined;
-  }
-
-  private handlePointerMove(event: PointerEvent): void {
-    if (!this.isMobile() || !this.isActivePointerDrag(event.pointerId)) return;
-    event.preventDefault();
-    this.scheduleDragUpdate(event.clientX, event.clientY);
-  }
-
-  private handleTouchMove(event: TouchEvent): void {
-    if (!this.isMobile() || !this.isActiveTouchDrag()) return;
-    const touch = this.getTouchById(event.touches, this.handleState!.touchId!);
-    if (!touch) return;
-    event.preventDefault();
-    this.scheduleDragUpdate(touch.clientX, touch.clientY);
-  }
-
-  private async handleTouchEnd(event: TouchEvent): Promise<void> {
-    if (!this.isMobile() || !this.isActiveTouchDrag()) return;
-    const touch = this.getTouchById(event.changedTouches, this.handleState!.touchId!);
-    if (!touch) return;
-    event.preventDefault();
-    await this.finalizeDrag();
-  }
-
-  private handleTouchCancel(event: TouchEvent): void {
-    if (!this.isMobile() || !this.isActiveTouchDrag()) return;
-    const touch = this.getTouchById(event.changedTouches, this.handleState!.touchId!);
-    if (!touch) return;
-    event.preventDefault();
-    this.clearPreviewSelection();
-  }
-
-  private async handlePointerUp(event: PointerEvent): Promise<void> {
-    if (!this.isMobile() || !this.isActivePointerDrag(event.pointerId)) return;
-    event.preventDefault();
-    await this.finalizeDrag();
-  }
-
-  private scheduleDragUpdate(clientX: number, clientY: number): void {
-    this.setDragging(true);
-    if (this.dragFrame) {
-      cancelAnimationFrame(this.dragFrame);
+  private exitAdjustmentMode(): void {
+    if (!this.adjustmentState) return;
+    if (this.adjustmentState.debounceTimer) {
+      clearTimeout(this.adjustmentState.debounceTimer);
     }
-    this.dragFrame = requestAnimationFrame(() => {
-      this.updateDragAtPoint(clientX, clientY);
-    });
+    console.debug('[Reader Highlighter] Exited adjustment mode');
+    this.adjustmentState = undefined;
   }
 
-  private updateDragAtPoint(clientX: number, clientY: number): void {
-    if (!this.handleState || !this.handleState.active) return;
-    const caretRange = this.withHandlesHiddenForHitTest(() =>
-      this.rangeFromPoint(clientX, clientY)
-    );
-    if (!caretRange) return;
-    const baseRange = this.handleState.previewRange ?? this.handleState.range;
-    const isStartDrag = this.handleState.active === 'start';
+  private handleSelectionChange(): void {
+    // Only process if in adjustment mode on mobile
+    if (!this.adjustmentState || !this.isMobile()) return;
 
-    const startNode = isStartDrag ? caretRange.startContainer : baseRange.startContainer;
-    const startOffset = isStartDrag ? caretRange.startOffset : baseRange.startOffset;
-    const endNode = isStartDrag ? baseRange.endContainer : caretRange.startContainer;
-    const endOffset = isStartDrag ? baseRange.endOffset : caretRange.startOffset;
+    const selection = window.getSelection();
 
-    const ordered =
-      this.comparePositions(startNode, startOffset, endNode, endOffset) <= 0
-        ? {
-            startNode,
-            startOffset,
-            endNode,
-            endOffset
-          }
-        : {
-            startNode: endNode,
-            startOffset: endOffset,
-            endNode: startNode,
-            endOffset: startOffset
-          };
+    // Selection collapsed = user tapped elsewhere, exit without persisting
+    if (!selection || selection.isCollapsed) {
+      this.exitAdjustmentMode();
+      return;
+    }
 
-    const newRange = document.createRange();
-    newRange.setStart(ordered.startNode, ordered.startOffset);
-    newRange.setEnd(ordered.endNode, ordered.endOffset);
+    // Verify selection is still within the original block
+    const range = selection.getRangeAt(0);
+    const startBlock = this.getBlock(range.startContainer);
+    const endBlock = this.getBlock(range.endContainer);
 
-    // Keep the drag limited to the original block
-    const startBlock = this.getBlock(newRange.startContainer);
-    const endBlock = this.getBlock(newRange.endContainer);
     if (
       !startBlock ||
       !endBlock ||
-      startBlock !== this.handleState.block ||
-      endBlock !== this.handleState.block
+      startBlock !== this.adjustmentState.block ||
+      endBlock !== this.adjustmentState.block
     ) {
+      // Selection left the block - cancel adjustment
+      console.debug('[Reader Highlighter] Selection left block, canceling adjustment');
+      this.exitAdjustmentMode();
+      selection.removeAllRanges();
       return;
     }
 
-    this.handleState.previewRange = newRange;
-    const sel = window.getSelection();
-    sel?.removeAllRanges();
-    sel?.addRange(newRange);
-    this.positionHandles(newRange);
+    // Debounce persistence
+    if (this.adjustmentState.debounceTimer) {
+      clearTimeout(this.adjustmentState.debounceTimer);
+    }
+
+    this.adjustmentState.debounceTimer = setTimeout(() => {
+      this.persistAdjustment(range.cloneRange());
+    }, ReaderHighlighterPlugin.ADJUSTMENT_DEBOUNCE_MS);
   }
 
-  private async finalizeDrag(): Promise<void> {
-    if (!this.handleState || !this.handleState.active) return;
-    const range = this.handleState.previewRange ?? this.handleState.range;
-    const block = this.getBlock(range.startContainer);
-    if (!block || block !== this.handleState.block) {
-      this.clearPreviewSelection();
-      this.handleState.active = undefined;
+  private async persistAdjustment(range: Range): Promise<void> {
+    if (!this.adjustmentState) return;
+
+    const newText = this.serializeRangeToMarkdown(range);
+    if (!newText) {
+      console.warn('[Reader Highlighter] Could not serialize adjusted selection');
       return;
     }
 
-    const markdown = this.serializeRangeToMarkdown(range);
-    if (!markdown) {
-      this.clearPreviewSelection();
-      this.handleState.active = undefined;
+    // Skip if text unchanged
+    if (newText === this.adjustmentState.originalText) {
       return;
     }
 
-    const file = this.handleState.file;
-    const originalText = this.handleState.highlightText;
-    const persisted = originalText
-      ? await this.persistAdjustedHighlight(file, originalText, markdown)
-      : await this.persistHighlight(file, markdown);
-    if (persisted && this.handleState) {
-      this.showHandles(range, block, this.handleState.root, markdown, file);
+    const success = await this.persistAdjustedHighlight(
+      this.adjustmentState.file,
+      this.adjustmentState.originalText,
+      newText
+    );
+
+    if (success && this.adjustmentState) {
+      // Update state to reflect new text (in case user continues adjusting)
+      this.adjustmentState.originalText = newText;
+      console.debug('[Reader Highlighter] Adjusted highlight to:', newText);
     }
-    this.clearPreviewSelection();
-  }
-
-  private getTouchById(list: TouchList, id: number): Touch | null {
-    for (let i = 0; i < list.length; i += 1) {
-      const touch = list.item(i);
-      if (touch && touch.identifier === id) return touch;
-    }
-    return null;
-  }
-
-  private dismissHandlesIfNeeded(event: MouseEvent, container: HTMLElement): void {
-    if (!this.isMobile()) return;
-    if (!this.handleState || this.handleState.root !== container) return;
-    const target = event.target as HTMLElement | null;
-    if (!target || target.classList.contains('reader-highlight-handle')) return;
-    this.removeHandles();
-  }
-
-  private clearPreviewSelection(): void {
-    const selection = window.getSelection();
-    selection?.removeAllRanges();
-    if (this.handleState) {
-      this.setActiveHandle(null);
-      this.setDragging(false);
-      this.handleState.active = undefined;
-      this.handleState.previewRange = undefined;
-      this.handleState.pointerId = undefined;
-      this.handleState.touchId = undefined;
-    }
-  }
-
-  private removeHandles(): void {
-    if (!this.handleState) return;
-    this.setActiveHandle(null);
-    this.setDragging(false);
-    this.handleState.layer.remove();
-    if (this.handleState.originalPosition !== undefined) {
-      this.handleState.host.style.position = this.handleState.originalPosition;
-    }
-    this.handleState = undefined;
-  }
-
-  private findScrollContainer(block: HTMLElement, root: HTMLElement): HTMLElement | null {
-    let el: HTMLElement | null = block;
-    while (el && el !== root) {
-      if (this.isScrollable(el)) return el;
-      el = el.parentElement;
-    }
-    return this.isScrollable(root) ? root : null;
-  }
-
-  private isScrollable(el: HTMLElement): boolean {
-    const style = getComputedStyle(el);
-    const canScrollY = el.scrollHeight > el.clientHeight + 1;
-    const overflowY = style.overflowY;
-    const scrollableY = overflowY === 'auto' || overflowY === 'scroll' || overflowY === 'overlay';
-    return canScrollY && scrollableY;
-  }
-
-  private setActiveHandle(handle: HTMLElement | null): void {
-    if (!this.handleState) return;
-    if (this.handleState.activeHandleEl) {
-      this.handleState.activeHandleEl.classList.remove('reader-highlight-handle--active');
-    }
-    if (handle) {
-      handle.classList.add('reader-highlight-handle--active');
-      this.handleState.layer.classList.add('reader-highlight-handle-layer--active');
-      this.handleState.activeHandleEl = handle;
-    } else {
-      this.handleState.layer.classList.remove('reader-highlight-handle-layer--active');
-      this.handleState.activeHandleEl = undefined;
-    }
-  }
-
-  private setDragging(active: boolean): void {
-    if (!this.handleState) return;
-    this.handleState.layer.classList.toggle('reader-highlight-handle-layer--dragging', active);
-  }
-
-  private resolveHandleTarget(
-    target: EventTarget | null,
-    clientX?: number,
-    clientY?: number
-  ): HTMLElement | null {
-    if (target instanceof HTMLElement) {
-      const handle = target.closest('.reader-highlight-handle');
-      if (handle instanceof HTMLElement) return handle;
-    }
-    if (clientX !== undefined && clientY !== undefined) {
-      const element = document.elementFromPoint(clientX, clientY);
-      if (element instanceof HTMLElement) {
-        const handle = element.closest('.reader-highlight-handle');
-        if (handle instanceof HTMLElement) return handle;
-      }
-    }
-    return null;
-  }
-
-  private comparePositions(
-    startNode: Node,
-    startOffset: number,
-    endNode: Node,
-    endOffset: number
-  ): number {
-    const rangeA = document.createRange();
-    rangeA.setStart(startNode, startOffset);
-    rangeA.setEnd(startNode, startOffset);
-
-    const rangeB = document.createRange();
-    rangeB.setStart(endNode, endOffset);
-    rangeB.setEnd(endNode, endOffset);
-
-    return rangeA.compareBoundaryPoints(Range.START_TO_START, rangeB);
-  }
-
-  private rangeFromPoint(x: number, y: number): Range | null {
-    const doc = (this.handleState?.root?.ownerDocument ?? document) as Document & {
-      caretRangeFromPoint?: (x: number, y: number) => Range | null;
-      caretPositionFromPoint?: (x: number, y: number) => { offsetNode: Node; offset: number } | null;
-    };
-    const caretRange = doc.caretRangeFromPoint?.(x, y);
-    if (caretRange) return caretRange;
-    const caretPos = doc.caretPositionFromPoint?.(x, y);
-    if (caretPos) {
-      const range = document.createRange();
-      range.setStart(caretPos.offsetNode, caretPos.offset);
-      range.collapse(true);
-      return range;
-    }
-    return this.rangeFromPointFallback(doc, x, y);
-  }
-
-  private rangeFromPointFallback(doc: Document, x: number, y: number): Range | null {
-    const element = doc.elementFromPoint(x, y);
-    if (!element) return null;
-    const scope = this.handleState?.block ?? element;
-    const textNode = this.findNearestTextNode(scope, x, y);
-    if (!textNode) return null;
-    const offset = this.closestOffsetInTextNode(textNode, x, y);
-    const range = doc.createRange();
-    range.setStart(textNode, offset);
-    range.collapse(true);
-    return range;
-  }
-
-  private findNearestTextNode(root: Element, x: number, y: number): Text | null {
-    const walker = (root.ownerDocument ?? document).createTreeWalker(root, NodeFilter.SHOW_TEXT);
-    let bestNode: Text | null = null;
-    let bestScore = Number.POSITIVE_INFINITY;
-
-    while (walker.nextNode()) {
-      const node = walker.currentNode as Text;
-      if (!node.data.length) continue;
-      const range = (root.ownerDocument ?? document).createRange();
-      range.selectNodeContents(node);
-      const rects = range.getClientRects();
-      if (!rects.length) continue;
-
-      for (const rect of Array.from(rects)) {
-        const withinY = y >= rect.top && y <= rect.bottom;
-        const verticalPenalty = withinY ? 0 : Math.min(Math.abs(y - rect.top), Math.abs(y - rect.bottom));
-        const horizontalPenalty =
-          x < rect.left ? rect.left - x : x > rect.right ? x - rect.right : 0;
-        const score = verticalPenalty * 1000 + horizontalPenalty;
-        if (score < bestScore) {
-          bestScore = score;
-          bestNode = node;
-        }
-      }
-    }
-
-    return bestNode;
-  }
-
-  private closestOffsetInTextNode(node: Text, x: number, y: number): number {
-    const textLength = node.data.length;
-    if (textLength === 0) return 0;
-    const doc = node.ownerDocument ?? document;
-    const range = doc.createRange();
-    let low = 0;
-    let high = textLength;
-    let best = 0;
-
-    while (low <= high) {
-      const mid = Math.floor((low + high) / 2);
-      range.setStart(node, 0);
-      range.setEnd(node, mid);
-      const rects = range.getClientRects();
-      if (!rects.length) {
-        low = mid + 1;
-        continue;
-      }
-      const lastRect = rects[rects.length - 1];
-      const above = y < lastRect.top;
-      const below = y > lastRect.bottom;
-
-      if (above) {
-        high = mid - 1;
-        continue;
-      }
-      if (below) {
-        low = mid + 1;
-        continue;
-      }
-
-      // Same line as the touch point.
-      if (x < lastRect.left) {
-        high = mid - 1;
-      } else if (x > lastRect.right) {
-        best = mid;
-        low = mid + 1;
-      } else {
-        best = mid;
-        break;
-      }
-    }
-
-    return Math.min(Math.max(best, 0), textLength);
-  }
-
-  private withHandlesHiddenForHitTest<T>(fn: () => T): T {
-    if (!this.handleState) return fn();
-    const previousPointer = this.handleState.layer.style.pointerEvents;
-    const previousVisibility = this.handleState.layer.style.visibility;
-    this.handleState.layer.style.pointerEvents = 'none';
-    this.handleState.layer.style.visibility = 'hidden';
-    const result = fn();
-    this.handleState.layer.style.pointerEvents = previousPointer;
-    this.handleState.layer.style.visibility = previousVisibility;
-    return result;
   }
 }

@@ -52,7 +52,7 @@ The plugin operates exclusively in Reader mode (preview) and handles three inter
 
 2. **Double-Click → Paragraph Highlight**: Double-clicking any word highlights the entire containing block (paragraph, list item, blockquote, heading). Block boundaries are determined via DOM traversal using `element.closest()`.
 
-3. **Mobile Handle Adjustment** (mobile only): After a highlight exists on mobile, draggable handles appear at the start and end. Users can drag handles to adjust boundaries with a live preview. On release, the adjusted selection is persisted. Handles are dismissed by tapping outside them.
+3. **Mobile Native Selection Adjustment** (mobile only): Immediately after a highlight is applied on mobile, the text remains selected and native OS selection handles appear. Users drag the native handles to adjust boundaries. After a short debounce (200-300ms), the adjusted highlight is persisted. Tapping elsewhere dismisses the selection and leaves the highlight unchanged.
 
 ### Selection & File Modification Pipeline
 
@@ -79,10 +79,10 @@ Modern Obsidian plugins use **declarative registration** for automatic cleanup:
 
 ### Mobile vs Desktop
 
-- **Detection**: Use `app.isMobile` and `Platform.isMobile`/`Platform.isPhone` from the obsidian module
-- **Desktop**: No handles; selection-only interaction
-- **Mobile**: Handles appear post-highlight for boundary adjustment; drag events debounced to ~60fps via `requestAnimationFrame`
-- **Testing**: Use `app.emulateMobile(!this.app.isMobile)` in dev console, but always verify on actual devices
+- **Detection**: Use `app.isMobile` and `Platform.isMobile`/`Platform.isPhone` from the obsidian module; tablets are considered mobile
+- **Desktop**: Selection-only interaction; no adjustment handles
+- **Mobile**: Native OS selection handles appear immediately after highlighting; use `selectionchange` events to observe adjustments; debounce persistence (200-300ms) before writing to note
+- **Testing**: Use `app.emulateMobile(!this.app.isMobile)` in dev console, but always verify on actual devices as desktop emulation differs from real mobile behavior
 
 ### Reader Mode Detection
 
@@ -96,11 +96,11 @@ Modern Obsidian plugins use **declarative registration** for automatic cleanup:
 - **Unsupported selections** (ambiguous, multi-block, etc.) are cancelled silently or with minimal feedback
 - **Content integrity > feature completeness**: Never leave partial or corrupted highlights
 - **Atomic operations**: File modifications wrapped in try-catch; DOM state rolled back on failure
-- **No undo/redo support** for handle adjustments or highlights in v1
+- **No undo/redo support** for selection adjustments or highlights in v1
 
 ### Performance Considerations
 
-- Debounce handle drag events to ~60fps max via `requestAnimationFrame`
+- Debounce mobile selection adjustment persistence to 200-300ms
 - Use event delegation where possible
 - Avoid re-parsing the entire document on each highlight
 - Cache frequently accessed DOM elements and file references
@@ -112,13 +112,18 @@ Modern Obsidian plugins use **declarative registration** for automatic cleanup:
 - **DOM tracking**: DOM modifications are automatically cleaned up via the registration system; no manual tracking needed
 - **Selection API**: Use native `window.getSelection()` for working with text selections in preview DOM
 - **Inline formatting**: Preserve inline formatting inside selections (e.g., `==some **bold** text==`)
-- **Intentional minimalism**: The plugin is deliberately minimal—no colors, styles, categories, comments, annotations, exporting, or undo support in v1
+- **Intentional minimalism**: The plugin is deliberately minimal—no colors, styles, categories, comments, annotations, exporting, multi-paragraph highlights, or undo support in v1
+- **Desktop adjustment**: No selection handle adjustment on desktop (mobile-only feature)
 
 ## Acceptance Criteria (v1)
 
 See [SPEC.md](SPEC.md) lines 252-264 for the full list. Key behaviors include:
 - Text selection immediately highlights in preview
 - Double-click highlights entire paragraph
-- Mobile handles allow boundary adjustment
+- Re-selecting highlighted text removes the highlight
+- On mobile, native OS selection handles appear immediately after highlighting
+- On mobile, dragging native handles adjusts highlight boundaries
+- On mobile, selection stabilization persists the adjusted highlight
+- On mobile, dismissing selection leaves highlight unchanged
 - Highlights persist across sessions and sync
 - Unsupported selections never modify the note
