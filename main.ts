@@ -28,25 +28,21 @@ export default class ReaderHighlighterPlugin extends Plugin {
   private handleState?: HandleState;
   private dragFrame?: number;
 
-  async onload() {
+  async onload(): Promise<void> {
     this.refreshPreviewBindings();
     this.registerEvent(
-      this.app.workspace.on('layout-change', () => {
-        this.refreshPreviewBindings();
-      })
+      this.app.workspace.on('layout-change', () => this.refreshPreviewBindings())
     );
     this.registerEvent(
-      this.app.workspace.on('active-leaf-change', () => {
-        this.refreshPreviewBindings();
-      })
+      this.app.workspace.on('active-leaf-change', () => this.refreshPreviewBindings())
     );
   }
 
-  onunload() {
+  onunload(): void {
     this.removeHandles();
   }
 
-  private refreshPreviewBindings() {
+  private refreshPreviewBindings(): void {
     const leaves = this.app.workspace.getLeavesOfType('markdown');
     for (const leaf of leaves) {
       const view = leaf.view;
@@ -56,110 +52,71 @@ export default class ReaderHighlighterPlugin extends Plugin {
     }
   }
 
-  private attachPreviewHandlers(view: MarkdownView) {
+  private attachPreviewHandlers(view: MarkdownView): void {
     const container = (view as any).previewMode?.containerEl as HTMLElement | undefined;
     if (!container || this.boundContainers.has(container)) return;
     this.boundContainers.add(container);
 
-    this.registerDomEvent(container, 'mouseup', (evt) => {
-      this.handleSelectionEvent(evt, view, container);
-    });
-    this.registerDomEvent(container, 'keyup', (evt) => {
-      this.handleSelectionEvent(evt, view, container);
-    });
+    const handleSelection = (evt: Event) => this.handleSelectionEvent(evt, view, container);
+
+    this.registerDomEvent(container, 'mouseup', handleSelection);
+    this.registerDomEvent(container, 'keyup', handleSelection);
     this.registerDomEvent(container, 'touchend', (evt) => {
       window.setTimeout(() => this.handleSelectionEvent(evt, view, container), 10);
     });
-    this.registerDomEvent(container, 'dblclick', (evt) => {
-      this.handleDoubleClick(evt, view, container);
-    });
-    this.registerDomEvent(
-      container,
-      'touchstart',
-      (evt) => {
-        this.handleTouchStart(evt, container);
-      },
-      { passive: false }
-    );
-    this.registerDomEvent(container, 'pointerdown', (evt) => {
-      this.handlePointerDown(evt, container);
-    });
+    this.registerDomEvent(container, 'dblclick', (evt) => this.handleDoubleClick(evt, view, container));
+    this.registerDomEvent(container, 'touchstart', (evt) => this.handleTouchStart(evt, container), { passive: false });
+    this.registerDomEvent(container, 'pointerdown', (evt) => this.handlePointerDown(evt, container));
+
     if (!this.documentEventsBound) {
       this.documentEventsBound = true;
-      this.registerDomEvent(
-        document,
-        'touchmove',
-        (evt) => {
-          this.handleTouchMove(evt);
-        },
-        { passive: false, capture: true }
-      );
-      this.registerDomEvent(
-        document,
-        'touchend',
-        (evt) => {
-          this.handleTouchEnd(evt);
-        },
-        { passive: false, capture: true }
-      );
-      this.registerDomEvent(
-        document,
-        'touchcancel',
-        (evt) => {
-          this.handleTouchCancel(evt);
-        },
-        { passive: false, capture: true }
-      );
-      this.registerDomEvent(document, 'pointermove', (evt) => {
-        this.handlePointerMove(evt);
-      }, true);
-      this.registerDomEvent(document, 'pointerup', (evt) => {
-        this.handlePointerUp(evt);
-      }, true);
-      this.registerDomEvent(window, 'scroll', () => {
-        this.positionHandles();
-      });
+      this.registerDomEvent(document, 'touchmove', (evt) => this.handleTouchMove(evt), { passive: false, capture: true });
+      this.registerDomEvent(document, 'touchend', (evt) => this.handleTouchEnd(evt), { passive: false, capture: true });
+      this.registerDomEvent(document, 'touchcancel', (evt) => this.handleTouchCancel(evt), { passive: false, capture: true });
+      this.registerDomEvent(document, 'pointermove', (evt) => this.handlePointerMove(evt), true);
+      this.registerDomEvent(document, 'pointerup', (evt) => this.handlePointerUp(evt), true);
+      this.registerDomEvent(window, 'scroll', () => this.positionHandles());
     }
-    this.registerDomEvent(container, 'scroll', () => {
-      this.positionHandles();
-    });
-    this.registerDomEvent(container, 'click', (evt) => {
-      this.dismissHandlesIfNeeded(evt, container);
-    });
+
+    this.registerDomEvent(container, 'scroll', () => this.positionHandles());
+    this.registerDomEvent(container, 'click', (evt) => this.dismissHandlesIfNeeded(evt, container));
   }
 
-  private async handleSelectionEvent(event: Event, view: MarkdownView, container: HTMLElement) {
+  private async handleSelectionEvent(event: Event, view: MarkdownView, container: HTMLElement): Promise<void> {
     if (view.getMode() !== 'preview') return;
     if (event instanceof MouseEvent && event.detail >= 2) return;
     if (this.handleState?.active) return;
+
     const selection = window.getSelection();
     if (!selection || selection.isCollapsed) return;
     if (!container.contains(selection.anchorNode) || !container.contains(selection.focusNode)) return;
-    const range = selection.getRangeAt(0).cloneRange();
 
-    const startBlock = this.getBlock(range.startContainer);
-    const endBlock = this.getBlock(range.endContainer);
-    if (!startBlock || !endBlock || startBlock !== endBlock) return;
+    const range = selection.getRangeAt(0).cloneRange();
+    const block = this.getBlock(range.startContainer);
+    if (!block || block !== this.getBlock(range.endContainer)) return;
 
     const markdown = this.serializeRangeToMarkdown(range);
     if (!markdown) return;
 
     const persisted = await this.persistHighlight(view.file, markdown);
     if (persisted && this.isMobile()) {
-      this.showHandles(range, startBlock, container, markdown, view.file);
+      this.showHandles(range, block, container, markdown, view.file);
     }
     selection.removeAllRanges();
   }
 
-  private async handleDoubleClick(event: MouseEvent, view: MarkdownView, container: HTMLElement) {
+  private async handleDoubleClick(event: MouseEvent, view: MarkdownView, container: HTMLElement): Promise<void> {
     if (view.getMode() !== 'preview') return;
+
     const target = event.target as Node | null;
     if (!target || !container.contains(target)) return;
+
     const block = this.getBlock(target);
     if (!block) return;
 
     const range = document.createRange();
     range.selectNodeContents(block);
+
     const markdown = this.serializeRangeToMarkdown(range);
     if (!markdown) return;
 
@@ -179,17 +136,11 @@ export default class ReaderHighlighterPlugin extends Plugin {
   }
 
   private serializeRangeToMarkdown(range: Range): string {
-    const fragment = range.cloneContents();
-    const markdown = this.fragmentToMarkdown(fragment).trim();
-    return markdown;
+    return this.fragmentToMarkdown(range.cloneContents()).trim();
   }
 
   private fragmentToMarkdown(fragment: DocumentFragment): string {
-    let buffer = '';
-    fragment.childNodes.forEach((node) => {
-      buffer += this.nodeToMarkdown(node);
-    });
-    return buffer;
+    return Array.from(fragment.childNodes).map((node) => this.nodeToMarkdown(node)).join('');
   }
 
   private nodeToMarkdown(node: Node): string {
@@ -230,8 +181,7 @@ export default class ReaderHighlighterPlugin extends Plugin {
 
   private async persistHighlight(file: TFile | null, markdown: string): Promise<boolean> {
     if (!file) return false;
-    const selection = markdown;
-    const wrapped = `==${selection}==`;
+    const wrapped = `==${markdown}==`;
 
     try {
       const content = await this.app.vault.read(file);
@@ -243,23 +193,20 @@ export default class ReaderHighlighterPlugin extends Plugin {
       }
 
       if (existingMatches.length === 1) {
-        const existingIndex = existingMatches[0];
-        const newContent =
-          content.slice(0, existingIndex) +
-          selection +
-          content.slice(existingIndex + wrapped.length);
+        const idx = existingMatches[0];
+        const newContent = content.slice(0, idx) + markdown + content.slice(idx + wrapped.length);
         await this.app.vault.modify(file, newContent);
         return true;
       }
 
-      const positions = this.findOccurrencesOutsideHighlight(content, selection);
+      const positions = this.findOccurrencesOutsideHighlight(content, markdown);
       if (positions.length !== 1) {
         console.warn('[Reader Highlighter] Ambiguous selection, aborting highlight.');
         return false;
       }
 
       const idx = positions[0];
-      const newContent = content.slice(0, idx) + wrapped + content.slice(idx + selection.length);
+      const newContent = content.slice(0, idx) + wrapped + content.slice(idx + markdown.length);
       await this.app.vault.modify(file, newContent);
       return true;
     } catch (error) {
@@ -331,14 +278,27 @@ export default class ReaderHighlighterPlugin extends Plugin {
     return Platform.isMobile || Platform.isPhone || this.app.isMobile;
   }
 
-  // Handle rendering and drag-to-adjust on mobile
+  private isActiveTouchDrag(): boolean {
+    return Boolean(
+      this.handleState?.active &&
+      this.handleState.pointerId === undefined &&
+      this.handleState.touchId !== undefined
+    );
+  }
+
+  private isActivePointerDrag(pointerId?: number): boolean {
+    if (!this.handleState?.active) return false;
+    if (this.handleState.pointerId === undefined) return false;
+    return pointerId === undefined || this.handleState.pointerId === pointerId;
+  }
+
   private showHandles(
     range: Range,
     block: HTMLElement,
     rootContainer: HTMLElement,
     highlightText: string,
     file: TFile | null
-  ) {
+  ): void {
     if (!this.isMobile()) return;
     this.removeHandles();
 
@@ -387,7 +347,7 @@ export default class ReaderHighlighterPlugin extends Plugin {
     this.positionHandles();
   }
 
-  private positionHandles(rangeOverride?: Range) {
+  private positionHandles(rangeOverride?: Range): void {
     if (!this.handleState) return;
     const range = rangeOverride ?? this.handleState.previewRange ?? this.handleState.range;
     const rects = range.getClientRects();
@@ -410,7 +370,7 @@ export default class ReaderHighlighterPlugin extends Plugin {
     this.handleState.endHandle.style.top = `${endTop}px`;
   }
 
-  private handlePointerDown(event: PointerEvent, container: HTMLElement) {
+  private handlePointerDown(event: PointerEvent, container: HTMLElement): void {
     if (!this.isMobile()) return;
     const target = this.resolveHandleTarget(event.target, event.clientX, event.clientY);
     if (!target) return;
@@ -425,7 +385,7 @@ export default class ReaderHighlighterPlugin extends Plugin {
     this.handleState.touchId = undefined;
   }
 
-  private handleTouchStart(event: TouchEvent, container: HTMLElement) {
+  private handleTouchStart(event: TouchEvent, container: HTMLElement): void {
     if (!this.isMobile()) return;
     const touch = event.changedTouches[0];
     if (!touch) return;
@@ -442,73 +402,53 @@ export default class ReaderHighlighterPlugin extends Plugin {
     this.handleState.pointerId = undefined;
   }
 
-  private handlePointerMove(event: PointerEvent) {
-    if (!this.isMobile()) return;
-    if (!this.handleState || !this.handleState.active) return;
-    if (this.handleState.pointerId !== undefined && this.handleState.pointerId !== event.pointerId) {
-      return;
-    }
+  private handlePointerMove(event: PointerEvent): void {
+    if (!this.isMobile() || !this.isActivePointerDrag(event.pointerId)) return;
     event.preventDefault();
-    this.setDragging(true);
-    if (this.dragFrame) {
-      cancelAnimationFrame(this.dragFrame);
-    }
-
-    this.dragFrame = requestAnimationFrame(() => {
-      this.updateDragAtPoint(event.clientX, event.clientY);
-    });
+    this.scheduleDragUpdate(event.clientX, event.clientY);
   }
 
-  private handleTouchMove(event: TouchEvent) {
-    if (!this.isMobile()) return;
-    if (!this.handleState || !this.handleState.active) return;
-    if (this.handleState.pointerId !== undefined) return;
-    if (this.handleState.touchId === undefined) return;
-    const touch = this.getTouchById(event.touches, this.handleState.touchId);
+  private handleTouchMove(event: TouchEvent): void {
+    if (!this.isMobile() || !this.isActiveTouchDrag()) return;
+    const touch = this.getTouchById(event.touches, this.handleState!.touchId!);
     if (!touch) return;
     event.preventDefault();
-    this.setDragging(true);
-    if (this.dragFrame) {
-      cancelAnimationFrame(this.dragFrame);
-    }
-    this.dragFrame = requestAnimationFrame(() => {
-      this.updateDragAtPoint(touch.clientX, touch.clientY);
-    });
+    this.scheduleDragUpdate(touch.clientX, touch.clientY);
   }
 
-  private async handleTouchEnd(event: TouchEvent) {
-    if (!this.isMobile()) return;
-    if (!this.handleState || !this.handleState.active) return;
-    if (this.handleState.pointerId !== undefined) return;
-    if (this.handleState.touchId === undefined) return;
-    const touch = this.getTouchById(event.changedTouches, this.handleState.touchId);
+  private async handleTouchEnd(event: TouchEvent): Promise<void> {
+    if (!this.isMobile() || !this.isActiveTouchDrag()) return;
+    const touch = this.getTouchById(event.changedTouches, this.handleState!.touchId!);
     if (!touch) return;
     event.preventDefault();
     await this.finalizeDrag();
   }
 
-  private handleTouchCancel(event: TouchEvent) {
-    if (!this.isMobile()) return;
-    if (!this.handleState || !this.handleState.active) return;
-    if (this.handleState.pointerId !== undefined) return;
-    if (this.handleState.touchId === undefined) return;
-    const touch = this.getTouchById(event.changedTouches, this.handleState.touchId);
+  private handleTouchCancel(event: TouchEvent): void {
+    if (!this.isMobile() || !this.isActiveTouchDrag()) return;
+    const touch = this.getTouchById(event.changedTouches, this.handleState!.touchId!);
     if (!touch) return;
     event.preventDefault();
     this.clearPreviewSelection();
   }
 
-  private async handlePointerUp(event: PointerEvent) {
-    if (!this.isMobile()) return;
-    if (!this.handleState || !this.handleState.active) return;
-    if (this.handleState.pointerId !== undefined && this.handleState.pointerId !== event.pointerId) {
-      return;
-    }
+  private async handlePointerUp(event: PointerEvent): Promise<void> {
+    if (!this.isMobile() || !this.isActivePointerDrag(event.pointerId)) return;
     event.preventDefault();
     await this.finalizeDrag();
   }
 
-  private updateDragAtPoint(clientX: number, clientY: number) {
+  private scheduleDragUpdate(clientX: number, clientY: number): void {
+    this.setDragging(true);
+    if (this.dragFrame) {
+      cancelAnimationFrame(this.dragFrame);
+    }
+    this.dragFrame = requestAnimationFrame(() => {
+      this.updateDragAtPoint(clientX, clientY);
+    });
+  }
+
+  private updateDragAtPoint(clientX: number, clientY: number): void {
     if (!this.handleState || !this.handleState.active) return;
     const caretRange = this.withHandlesHiddenForHitTest(() =>
       this.rangeFromPoint(clientX, clientY)
@@ -560,7 +500,7 @@ export default class ReaderHighlighterPlugin extends Plugin {
     this.positionHandles(newRange);
   }
 
-  private async finalizeDrag() {
+  private async finalizeDrag(): Promise<void> {
     if (!this.handleState || !this.handleState.active) return;
     const range = this.handleState.previewRange ?? this.handleState.range;
     const block = this.getBlock(range.startContainer);
@@ -596,7 +536,7 @@ export default class ReaderHighlighterPlugin extends Plugin {
     return null;
   }
 
-  private dismissHandlesIfNeeded(event: MouseEvent, container: HTMLElement) {
+  private dismissHandlesIfNeeded(event: MouseEvent, container: HTMLElement): void {
     if (!this.isMobile()) return;
     if (!this.handleState || this.handleState.root !== container) return;
     const target = event.target as HTMLElement | null;
@@ -604,7 +544,7 @@ export default class ReaderHighlighterPlugin extends Plugin {
     this.removeHandles();
   }
 
-  private clearPreviewSelection() {
+  private clearPreviewSelection(): void {
     const selection = window.getSelection();
     selection?.removeAllRanges();
     if (this.handleState) {
@@ -617,7 +557,7 @@ export default class ReaderHighlighterPlugin extends Plugin {
     }
   }
 
-  private removeHandles() {
+  private removeHandles(): void {
     if (!this.handleState) return;
     this.setActiveHandle(null);
     this.setDragging(false);
@@ -645,7 +585,7 @@ export default class ReaderHighlighterPlugin extends Plugin {
     return canScrollY && scrollableY;
   }
 
-  private setActiveHandle(handle: HTMLElement | null) {
+  private setActiveHandle(handle: HTMLElement | null): void {
     if (!this.handleState) return;
     if (this.handleState.activeHandleEl) {
       this.handleState.activeHandleEl.classList.remove('reader-highlight-handle--active');
@@ -660,13 +600,9 @@ export default class ReaderHighlighterPlugin extends Plugin {
     }
   }
 
-  private setDragging(active: boolean) {
+  private setDragging(active: boolean): void {
     if (!this.handleState) return;
-    if (active) {
-      this.handleState.layer.classList.add('reader-highlight-handle-layer--dragging');
-    } else {
-      this.handleState.layer.classList.remove('reader-highlight-handle-layer--dragging');
-    }
+    this.handleState.layer.classList.toggle('reader-highlight-handle-layer--dragging', active);
   }
 
   private resolveHandleTarget(

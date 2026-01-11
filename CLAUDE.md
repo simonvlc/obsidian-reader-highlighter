@@ -25,6 +25,8 @@ npm run build    # Production build
 
 Note: Linting, formatting, and testing scripts are not currently configured in this project.
 
+**Important**: After making any code changes, always run `npm run build` to compile the plugin before the user can test it.
+
 ### Development Environment
 - Develop in a dedicated test vault to prevent data loss
 - Use developer console: `app.emulateMobile(!this.app.isMobile)` to test mobile behavior on desktop
