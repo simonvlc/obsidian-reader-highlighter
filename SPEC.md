@@ -33,7 +33,7 @@ Core behavior (Reader mode only)
 
 Key principle:
 
-Selecting text is the action. No other interaction is required or supported for creating highlights. On mobile, optional draggable handles provide boundary adjustment after a highlight exists.
+Selecting text is the action. No other interaction is required or supported for creating highlights. On mobile, native OS selection handles appear immediately after a highlight is created so the user can adjust it in place.
 
 ⸻
 
@@ -51,20 +51,18 @@ A “paragraph” is a single rendered block. Highlighting never spans multiple 
 
 ⸻
 
-3. Mobile highlight adjustment via draggable handles
-	•	On mobile devices, after a highlight is applied (via selection or double-tap):
-	•	Two native-styled text selection handles appear at the start and end of the highlighted text
-	•	Handles use Obsidian's accent color scheme
-	•	Users can touch and drag either handle to extend or reduce the highlight
-	•	While dragging, a visual preview (semi-transparent highlight) shows the new selection
-	•	When released, the old highlight is removed and a new one is applied to the adjusted selection
-	•	Handles reposition to the new highlight boundaries
-	•	Tapping anywhere outside the handles dismisses them, leaving the highlight intact
+3. Mobile highlight adjustment via native OS selection
+	•	On mobile devices, immediately after a highlight is applied:
+	•	The highlighted text remains selected
+	•	The OS selection handles appear at the selection boundaries
+	•	Users drag the native handles to extend or reduce the selection
+	•	When the selection stabilizes (short debounce), the highlight is updated in the note
+	•	Dismissing the selection (tap elsewhere) leaves the highlight unchanged
 
 Constraints:
-	•	Handles are mobile-only (no desktop support)
+	•	Native selection handles are mobile-only (no desktop adjustment)
 	•	Multi-paragraph highlights remain unsupported
-	•	Undo/redo of handle adjustments is not supported
+	•	Undo/redo of selection adjustments is not supported
 
 ⸻
 
@@ -81,13 +79,13 @@ Interaction constraints (intentional)
 
 Allowed interactions
 	•	Selecting text on screen (mouse, touch, or keyboard selection) is the primary way to create or remove highlights.
-	•	On mobile only: Dragging handles to adjust existing highlight boundaries.
+	•	On mobile only: Immediately after highlighting, use native selection handles to adjust the selection.
 
 Disallowed interactions
 	•	No command palette actions
 	•	No context menu items
 	•	No keyboard shortcuts dedicated to highlighting
-	•	No UI affordances except mobile handles (which appear only after a highlight exists)
+	•	No UI affordances except native OS selection handles (shown immediately after a highlight on mobile)
 
 This ensures the feature:
 	•	Feels native and invisible during initial highlighting
@@ -104,7 +102,7 @@ Supported interactions
 The plugin guarantees correct behavior for:
 	•	Single, continuous selections
 	•	Paragraph-level highlighting via double-click
-	•	Mobile handle dragging to adjust highlight boundaries
+	•	Mobile native selection adjustment right after highlighting
 
 Guardrails (safe defaults)
 	•	If the selection cannot be safely or unambiguously applied:
@@ -153,10 +151,10 @@ Required coverage
 	•	Highlights persist after reload and sync
 	•	Unsupported selections never modify the note
 	•	Re-selecting highlighted text correctly removes the highlight
-	•	On mobile, handles appear after highlighting
-	•	On mobile, dragging handles shows visual preview
-	•	On mobile, releasing handles applies the adjusted highlight
-	•	On mobile, tapping outside handles dismisses them without changing the highlight
+	•	On mobile, native selection handles appear right after highlighting
+	•	On mobile, adjusting the native selection updates the highlight boundaries
+	•	On mobile, selection stabilization persists the adjusted highlight
+	•	On mobile, dismissing the selection leaves the highlight unchanged
 
 Failure handling
 	•	In all failure cases:
@@ -172,7 +170,7 @@ Non-goals (explicit)
 	•	❌ Comments, annotations, or metadata
 	•	❌ Exporting or sharing highlights
 	•	❌ Multi-paragraph highlights (even with handle adjustment)
-	•	❌ Desktop handle support (handles are mobile-only)
+	•	❌ Desktop adjustment via selection handles (mobile-only)
 
 Undo, multi-paragraph support, and advanced controls are intentionally deferred to future versions.
 
@@ -231,17 +229,11 @@ Mobile detection
 	•	For testing: Use app.emulateMobile(!this.app.isMobile) in developer console to toggle mobile emulation on desktop
 	•	Always verify on actual mobile devices, as desktop emulation differs from real mobile behavior
 
-Handle positioning
-	•	Use Range.getBoundingClientRect() for selection bounds
-	•	Position handles using absolute positioning within scroll container
-	•	Update handle positions on scroll events
-	•	Use CSS transforms for smooth repositioning
-
-Visual feedback
-	•	Apply highlights immediately to preview DOM using CSS classes
-	•	Use temporary classes for preview state (e.g., .highlight-preview)
-	•	Use permanent classes for persisted highlights (e.g., .highlight-persisted)
-	•	Debounce drag updates using requestAnimationFrame
+Native selection adjustment
+	•	On mobile, keep the selection active after applying the highlight
+	•	Use selectionchange events to observe user adjustments immediately after highlight creation
+	•	Debounce persistence (e.g., 200-300ms) before writing to the note
+	•	Cancel adjustment if the selection collapses or leaves the original block
 
 Error handling
 	•	Wrap all file modifications in try-catch blocks
@@ -262,14 +254,14 @@ Acceptance criteria (v1 ship-ready)
 	2.	Plugin metadata is correct (name, version, author, description).
 	3.	Selecting text in Reader mode automatically highlights it.
 	4.	Double-clicking any word highlights the entire paragraph.
-	5.	On mobile, native-styled text selection handles (using Obsidian colors) appear at highlight boundaries after a highlight is applied.
-	6.	On mobile, handles can be dragged to adjust the highlight with a visual preview during drag.
-	7.	On mobile, releasing a handle applies the adjusted highlight and updates the markdown.
-	8.	On mobile, tapping outside handles dismisses them without modifying the highlight.
+	5.	On mobile, native OS selection handles appear immediately after a highlight is created.
+	6.	On mobile, dragging native selection handles adjusts the highlight boundaries.
+	7.	On mobile, when the selection stabilizes, the adjusted highlight persists to markdown.
+	8.	On mobile, dismissing the selection leaves the highlight unchanged.
 	9.	Highlights persist reliably across sessions and devices.
 	10.	Unsupported selections never alter the note.
 	11.	The feature works consistently on desktop and mobile.
-	12.	Highlights are created via on-screen text selection. On mobile, existing highlights can be adjusted via handle dragging.
+	12.	Highlights are created via on-screen text selection. On mobile, users can adjust right after creation via native selection handles.
 
 ⸻
 
