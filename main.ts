@@ -6,6 +6,8 @@ interface AdjustmentState {
   file: TFile | null;
   originalText: string;
   debounceTimer?: ReturnType<typeof setTimeout>;
+  isDragging: boolean;
+  lastSelectionRange?: Range;
 }
 
 export default class ReaderHighlighterPlugin extends Plugin {
@@ -13,8 +15,8 @@ export default class ReaderHighlighterPlugin extends Plugin {
   private documentEventsBound = false;
   private adjustmentState?: AdjustmentState;
 
-  private static readonly ADJUSTMENT_DEBOUNCE_MS = 250;
   private static readonly RERENDER_DELAY_MS = 50;
+  private static readonly TOUCHEND_PERSIST_DELAY_MS = 50;
 
   async onload(): Promise<void> {
     this.refreshPreviewBindings();
@@ -61,6 +63,12 @@ export default class ReaderHighlighterPlugin extends Plugin {
     if (!this.documentEventsBound) {
       this.documentEventsBound = true;
       this.registerDomEvent(document, 'selectionchange', () => this.handleSelectionChange());
+
+      // Register touch events to detect handle dragging on mobile
+      if (this.isMobile()) {
+        this.registerDomEvent(document, 'touchstart', () => this.handleTouchStart());
+        this.registerDomEvent(document, 'touchend', () => this.handleTouchEnd());
+      }
     }
   }
 
@@ -393,7 +401,7 @@ export default class ReaderHighlighterPlugin extends Plugin {
 
   private enterAdjustmentMode(block: HTMLElement, file: TFile | null, originalText: string): void {
     this.exitAdjustmentMode();
-    this.adjustmentState = { block, file, originalText };
+    this.adjustmentState = { block, file, originalText, isDragging: false };
     console.debug('[Reader Highlighter] Entered adjustment mode for:', originalText);
   }
 
@@ -436,14 +444,41 @@ export default class ReaderHighlighterPlugin extends Plugin {
       return;
     }
 
-    // Debounce persistence
+    // Mark as dragging when selection changes
+    this.adjustmentState.isDragging = true;
+
+    // Store the latest selection range, but don't persist yet
+    this.adjustmentState.lastSelectionRange = range.cloneRange();
+
+    // Clear any existing debounce timer (we'll persist on touchend instead)
     if (this.adjustmentState.debounceTimer) {
       clearTimeout(this.adjustmentState.debounceTimer);
+      this.adjustmentState.debounceTimer = undefined;
     }
+  }
 
+  private handleTouchStart(): void {
+    // Track that user is potentially starting to drag selection handles
+    if (!this.adjustmentState || !this.isMobile()) return;
+
+    const selection = window.getSelection();
+    if (selection && !selection.isCollapsed) {
+      this.adjustmentState.isDragging = true;
+    }
+  }
+
+  private handleTouchEnd(): void {
+    // User released touch - now we can persist the adjusted selection
+    if (!this.adjustmentState || !this.isMobile()) return;
+    if (!this.adjustmentState.isDragging) return;
+
+    this.adjustmentState.isDragging = false;
+
+    // Use a short delay to ensure selectionchange has fired with final position
     this.adjustmentState.debounceTimer = setTimeout(() => {
-      this.persistAdjustment(range.cloneRange());
-    }, ReaderHighlighterPlugin.ADJUSTMENT_DEBOUNCE_MS);
+      if (!this.adjustmentState?.lastSelectionRange) return;
+      this.persistAdjustment(this.adjustmentState.lastSelectionRange);
+    }, ReaderHighlighterPlugin.TOUCHEND_PERSIST_DELAY_MS);
   }
 
   private async persistAdjustment(range: Range): Promise<void> {
